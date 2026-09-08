@@ -83,10 +83,13 @@ class UpstashRedisStore implements StateStore {
       cache: 'no-store',
     });
     if (!res.ok) throw new Error(`durable-store ${String(cmd[0])} ${res.status}`);
-    const j = (await res.json()) as { result?: T; error?: string }[];
-    if (!j[0]) throw new Error(`durable-store ${String(cmd[0])}: empty reply`);
-    if (j[0].error) throw new Error(`durable-store ${String(cmd[0])}: ${j[0].error}`);
-    return j[0].result as T;
+    const raw = (await res.json()) as
+      | { result?: T; error?: string }
+      | { result?: T; error?: string }[];
+    const reply = Array.isArray(raw) ? raw[0] : raw;
+    if (!reply) throw new Error(`durable-store ${String(cmd[0])}: empty reply`);
+    if (reply.error) throw new Error(`durable-store ${String(cmd[0])}: ${reply.error}`);
+    return reply.result as T;
   }
 
   async get(key: string): Promise<string | null> {
