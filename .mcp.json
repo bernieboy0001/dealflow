@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "dealflow": {
+      "command": "npx",
+      "args": ["tsx", "scripts/mcp.ts"],
+      "env": {}
+    }
+  }
+}
