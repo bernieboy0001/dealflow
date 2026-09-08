@@ -1,5 +1,5 @@
-import { buildRuntime, addressOf } from '../runtime.js';
-import { toDecimal, toAssetDecimal } from '../domain/money.js';
+import { toAssetDecimal, toDecimal } from '../domain/money.js';
+import { addressOf, buildRuntime } from '../runtime.js';
 
 const { market, broker, auditor, subaccount, orchestrator, ledger } = buildRuntime();
 
@@ -17,7 +17,9 @@ async function main() {
   console.log(DIM('  Pay-per-outcome agents on Binance Agent OS. Work is a priced deal,'));
   console.log(DIM('  provably delivered, signed by you, paid only when the work checks out.'));
   hr();
-  console.log(`  principal      ${addressOf((process.env.DEALFLOW_PRINCIPAL_KEY as `0x${string}`) ?? '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d')}`);
+  console.log(
+    `  principal      ${addressOf((process.env.DEALFLOW_PRINCIPAL_KEY as `0x${string}`) ?? '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d')}`,
+  );
   console.log(`  subaccount     ${subaccount.id}`);
   console.log(`  market         ${market.constructor.name}`);
   hr();
@@ -38,14 +40,23 @@ async function main() {
   const deal = await orchestrator.propose(job, { BTC: 0.2, ETH: 0.4, SOL: 0.4 });
   console.log(YEL(`  STEP 2 · deal pinned`));
   console.log(`  deal           ${deal.id}`);
-  const exposureMicro = deal.orders.reduce((a, o) => a + (BigInt(o.quantity) * BigInt(o.limitPriceMicro)) / 1_000_000n, 0n);
-  console.log(`  status         ${deal.status} · ${deal.orders.length} legs · exposure $${toDecimal(exposureMicro)} · worker fee $${toDecimal(BigInt(deal.feeAtomic))}`);
+  const exposureMicro = deal.orders.reduce(
+    (a, o) => a + (BigInt(o.quantity) * BigInt(o.limitPriceMicro)) / 1_000_000n,
+    0n,
+  );
+  console.log(
+    `  status         ${deal.status} · ${deal.orders.length} legs · exposure $${toDecimal(exposureMicro)} · worker fee $${toDecimal(BigInt(deal.feeAtomic))}`,
+  );
   hr();
 
   // 3 — principal signs the EIP-712 intent
   const { signIntent } = await import('../domain/intent.js');
   const intent = orchestrator.intentFor(deal, 0);
-  const signature = await signIntent(intent, (process.env.DEALFLOW_PRINCIPAL_KEY as `0x${string}`) ?? '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d');
+  const signature = await signIntent(
+    intent,
+    (process.env.DEALFLOW_PRINCIPAL_KEY as `0x${string}`) ??
+      '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
+  );
   const approved = await orchestrator.approve(deal.id, signature as `0x${string}`);
   console.log(YEL(`  STEP 3 · principal signs intent (EIP-712)`));
   console.log(`  ${approved.intent?.job}`);
@@ -57,22 +68,30 @@ async function main() {
   const executed = await orchestrator.execute(deal.id);
   console.log(YEL(`  STEP 4 · broker executes on scoped subaccount`));
   for (const r of executed.receipts) {
-    console.log(`  fill           ${r.side} ${toAssetDecimal(BigInt(r.quantity))} ${r.symbol} @ $${toDecimal(BigInt(r.priceMicro))} · ${r.status} · ${r.clientOrderId}`);
+    console.log(
+      `  fill           ${r.side} ${toAssetDecimal(BigInt(r.quantity))} ${r.symbol} @ $${toDecimal(BigInt(r.priceMicro))} · ${r.status} · ${r.clientOrderId}`,
+    );
   }
   hr();
 
   // 5 — auditor reconciles, signs verdict
   const audited = await orchestrator.audit(deal.id);
   console.log(YEL(`  STEP 5 · auditor reconciles`));
-  console.log(`  verdict        ${audited.audit?.passed ? GRN('PASS') : 'FAIL'} · ${audited.audit?.checks.map((c) => c.name).join(', ')}`);
+  console.log(
+    `  verdict        ${audited.audit?.passed ? GRN('PASS') : 'FAIL'} · ${audited.audit?.checks.map((c) => c.name).join(', ')}`,
+  );
   console.log(`  signed by      ${audited.audit?.signedBy}`);
   hr();
 
   // 6 — x402 payment releases only now
   const settled = await orchestrator.settle(deal.id);
   console.log(YEL(`  STEP 6 · x402 settlement — payment releases on verified work`));
-  console.log(`  rail           ${settled.payment?.rail} · scheme ${settled.payment?.scheme} · ${settled.payment?.network}`);
-  console.log(`  amount         $${toDecimal(BigInt(settled.payment?.amountAtomic ?? '0'))} → ${settled.payment?.payTo}`);
+  console.log(
+    `  rail           ${settled.payment?.rail} · scheme ${settled.payment?.scheme} · ${settled.payment?.network}`,
+  );
+  console.log(
+    `  amount         $${toDecimal(BigInt(settled.payment?.amountAtomic ?? '0'))} → ${settled.payment?.payTo}`,
+  );
   console.log(`  tx             ${settled.payment?.txHash}`);
   hr();
 
@@ -80,12 +99,15 @@ async function main() {
   console.log(YEL(`  STEP 7 · evidence — everything signed, bounded, recorded`));
   console.log(`  ledger root    ${ledger.root()}`);
   console.log(`  chain intact   ${ledger.verify() ? GRN('VERIFIED') : 'BROKEN'}`);
-  for (const e of ledger.all()) console.log(DIM(`  ${String(e.seq).padStart(2, ' ')} ${e.kind.padEnd(20)} ${e.hash.slice(0, 16)}…`));
+  for (const e of ledger.all())
+    console.log(DIM(`  ${String(e.seq).padStart(2, ' ')} ${e.kind.padEnd(20)} ${e.hash.slice(0, 16)}…`));
   hr();
   console.log(GRN('  DONE — the deal settled. The agent got paid for provable work.'));
   console.log(`  post-trade balances:`);
   const pos = await subaccount.positions(['BTC', 'ETH', 'SOL']);
-  console.log(`  BTC ${toAssetDecimal(BigInt(pos.balances['BTC'] ?? '0'))} · ETH ${toAssetDecimal(BigInt(pos.balances['ETH'] ?? '0'))} · SOL ${toAssetDecimal(BigInt(pos.balances['SOL'] ?? '0'))} · cash $${toDecimal(BigInt(pos.cashAtomic))}`);
+  console.log(
+    `  BTC ${toAssetDecimal(BigInt(pos.balances.BTC ?? '0'))} · ETH ${toAssetDecimal(BigInt(pos.balances.ETH ?? '0'))} · SOL ${toAssetDecimal(BigInt(pos.balances.SOL ?? '0'))} · cash $${toDecimal(BigInt(pos.cashAtomic))}`,
+  );
   console.log();
   void auditor;
 }

@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+
 /**
  * Minimal MCP stdio server (JSON-RPC 2.0 over newline-delimited stdin/stdout)
  * exposing dealflow as tools to any MCP-capable agent (Claude, etc.).
@@ -9,10 +10,9 @@
  * Run: `npx tsx scripts/mcp.ts`   (declare in .mcp.json / .claude/settings.json)
  */
 
-import { buildRuntime } from '../src/runtime.js';
-import { POLICY, policyHash, checkProposal } from '../src/domain/policy.js';
-import { Ledger } from '../src/ledger.js';
 import { createInterface } from 'node:readline';
+import { checkProposal, POLICY, policyHash } from '../src/domain/policy.js';
+import { buildRuntime } from '../src/runtime.js';
 
 // ---------------------------------------------------------------------------
 
@@ -141,7 +141,7 @@ async function callTool(name: string, args: Record<string, unknown>) {
 const rl = createInterface({ input: process.stdin, terminal: false });
 
 function send(msg: unknown) {
-  process.stdout.write(JSON.stringify(msg) + '\n');
+  process.stdout.write(`${JSON.stringify(msg)}\n`);
 }
 
 rl.on('line', async (line) => {
@@ -180,7 +180,10 @@ rl.on('line', async (line) => {
         },
       });
     } else if (method === 'tools/call') {
-      const { name, arguments: args } = (req.params ?? {}) as { name?: string; arguments?: Record<string, unknown> };
+      const { name, arguments: args } = (req.params ?? {}) as {
+        name?: string;
+        arguments?: Record<string, unknown>;
+      };
       const result = await callTool(name ?? '', args ?? {});
       send({
         jsonrpc: '2.0',

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 export interface LedgerEntry {
@@ -77,10 +77,7 @@ export class Ledger {
     let prev = 'genesis';
     for (const e of this.entries) {
       const body = JSON.stringify({ seq: e.seq, kind: e.kind, payload: e.payload });
-      const expect = createHash('sha256')
-        .update(body)
-        .update(prev)
-        .digest('hex');
+      const expect = createHash('sha256').update(body).update(prev).digest('hex');
       if (expect !== e.hash) return false;
       if (e.prevHash !== prev) return false;
       prev = e.hash;

@@ -1,13 +1,19 @@
-import { policyHash, checkProposal, POLICY } from './domain/policy.js';
-import { ASSET_UNIT } from './domain/money.js';
-import { createDeal, toIntent, transition } from './domain/deal.js';
-import { recoverSigner } from './domain/intent.js';
-import type { Broker } from './agent/broker.js';
-import type { Auditor } from './agent/auditor.js';
-import { Ledger } from './ledger.js';
-import { LocalFacilitator, buildPaymentRequired, signAuthorization, encodePaymentRequired, encodePaymentPayload } from './money/rail.js';
 import { privateKeyToAccount } from 'viem/accounts';
-import type { Deal, DealIntent, Receipt, Side, Subaccount } from './types.js';
+import type { Auditor } from './agent/auditor.js';
+import type { Broker } from './agent/broker.js';
+import { assertOrdersSortedStable, createDeal, toIntent, transition } from './domain/deal.js';
+import { recoverSigner } from './domain/intent.js';
+import { ASSET_UNIT } from './domain/money.js';
+import { checkProposal, POLICY } from './domain/policy.js';
+import type { Ledger } from './ledger.js';
+import {
+  buildPaymentRequired,
+  encodePaymentPayload,
+  encodePaymentRequired,
+  LocalFacilitator,
+  signAuthorization,
+} from './money/rail.js';
+import type { Deal, DealIntent, Receipt, Subaccount } from './types.js';
 
 export interface OrchestratorOpts {
   broker: Broker;
@@ -51,7 +57,13 @@ export class Orchestrator {
     }
     const deal = createDeal(proposal);
     this.deals.set(deal.id, deal);
-    this.opts.ledger.append('deal.proposed', { id: deal.id, job, orders: deal.orders, fee: deal.feeAtomic, policyHash: deal.policyHash });
+    this.opts.ledger.append('deal.proposed', {
+      id: deal.id,
+      job,
+      orders: deal.orders,
+      fee: deal.feeAtomic,
+      policyHash: deal.policyHash,
+    });
     return this.mutate(deal, 'proposed');
   }
 
@@ -85,6 +97,7 @@ export class Orchestrator {
     if (this.emergencyStop) throw new Error('emergency stop engaged');
     let deal = this.deals.get(dealId);
     if (!deal) throw new Error('unknown deal');
+    assertOrdersSortedStable(deal.orders); // sells first → the deal is funded as it fills
     deal = transition(deal, 'executing');
 
     const receipts: Receipt[] = [];
@@ -97,7 +110,10 @@ export class Orchestrator {
         side: o.side,
         quantity: o.quantity,
         priceMicro: o.limitPriceMicro,
-        feeMicro: ((BigInt(o.quantity) * BigInt(o.limitPriceMicro) * BigInt(POLICY.maxTotalFeeBps)) / (ASSET_UNIT * 10_000n)).toString(),
+        feeMicro: (
+          (BigInt(o.quantity) * BigInt(o.limitPriceMicro) * BigInt(POLICY.maxTotalFeeBps)) /
+          (ASSET_UNIT * 10_000n)
+        ).toString(),
         status: 'filled',
         txRef: `blk-${0xdec + i}`,
         at: new Date().toISOString(),
@@ -106,7 +122,14 @@ export class Orchestrator {
     }
     const settled = await this.opts.subaccount.execute(receipts);
     deal = { ...deal, receipts: settled };
-    this.opts.ledger.append('deal.executed', { id: deal.id, receipts: settled.map((r) => ({ clientOrderId: r.clientOrderId, qty: r.quantity, price: r.priceMicro })) });
+    this.opts.ledger.append('deal.executed', {
+      id: deal.id,
+      receipts: settled.map((r) => ({
+        clientOrderId: r.clientOrderId,
+        qty: r.quantity,
+        price: r.priceMicro,
+      })),
+    });
     return this.mutate(deal, 'executed');
   }
 
@@ -115,7 +138,10 @@ export class Orchestrator {
     if (!deal) throw new Error('unknown deal');
     const verdict = await this.opts.auditor.audit(deal);
     deal = { ...deal, audit: verdict };
-    this.opts.ledger.append('deal.audited', { id: deal.id, verdict: { passed: verdict.passed, checks: verdict.checks, signedBy: verdict.signedBy } });
+    this.opts.ledger.append('deal.audited', {
+      id: deal.id,
+      verdict: { passed: verdict.passed, checks: verdict.checks, signedBy: verdict.signedBy },
+    });
     if (!verdict.passed) {
       return this.mutate(deal, 'failed');
     }
@@ -131,8 +157,18 @@ export class Orchestrator {
     deal = transition(deal, 'settled');
 
     const fee = BigInt(deal.feeAtomic);
-    const req = buildPaymentRequired({ resource: `deal/${deal.id}/work`, payTo: this.workerPayTo(), maxAmountAtomic: fee, scheme: 'upto' });
-    const { payload } = await signAuthorization({ signerPrivateKey: this.principalPrivateKey(), req, amountAtomic: fee, resource: `deal/${deal.id}/work` });
+    const req = buildPaymentRequired({
+      resource: `deal/${deal.id}/work`,
+      payTo: this.workerPayTo(),
+      maxAmountAtomic: fee,
+      scheme: 'upto',
+    });
+    const { payload } = await signAuthorization({
+      signerPrivateKey: this.principalPrivateKey(),
+      req,
+      amountAtomic: fee,
+      resource: `deal/${deal.id}/work`,
+    });
 
     const verified = await this.facilitator.verify(payload);
     if (!verified.ok) throw new Error(`x402 rejected: ${verified.reason}`);

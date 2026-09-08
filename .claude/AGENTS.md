@@ -10,6 +10,8 @@ against the signed intent; only then does an x402 payment release the fee.
 - `npm run demo` — full 7-step lifecycle in the terminal (propose → sign → execute → audit → settle → evidence → DONE).
 - `npm test` — vitest unit suite (money, policy, ledger, subaccount, auditor, EIP-712 roundtrip).
 - `npm run typecheck` — `tsc --noEmit`.
+- `npm run lint` / `npm run lint:fix` — Biome (style, correctness, unused imports). Fixer is safe-write only; review its suggestions for the rest.
+- `npm run typecheck:ui` — `tsc --noEmit -p ui/tsconfig.json`.
 - `npm run start` — Express API + dashboard on `http://127.0.0.1:4173`.
 - `npm run dev` — server with watch. Rebuild UI first: `npm run ui:build` (Vite, output to `ui/dist`).
 - `npm run ui:dev` — Vite dev server (5173, proxies `/api` to 4173).
@@ -30,7 +32,7 @@ otherwise a static fixture is used (`src/market.ts`) so the demo is offline-safe
 | `src/account.ts` | `VirtualSubaccount` — simulated fills with cash/asset checks. |
 | `src/ledger.ts` | Append-only hash-chained evidence log; `verify()` fails on any rewrite. |
 | `src/money/rail.ts` | x402 `upto` authorization objects (PAYMENT-REQUIRED / PAYMENT-SIGNATURE wire format). |
-| `src/server.ts` + `ui/` | Express API + Vite/React dashboard driving the same lifecycle via HTTP. |
+| `src/server.ts` + `ui/` | Express API (`/api/state`, `/api/market`, propose/approve/execute/settle, `/api/ledger`) + Vite/React dashboard driving the same lifecycle via HTTP. |
 
 ## The deal lifecycle (exactly 7 ledger events)
 
@@ -46,6 +48,12 @@ otherwise a static fixture is used (`src/market.ts`) so the demo is offline-safe
 cannot fund at the limit price (self-funding deals). The sizing logic in
 `broker.propose` enforces this — if you touch it, rerun `npm run demo` and confirm
 every leg fills and the audit passes.
+
+**Order invariant (canonical, tested):** deal orders must be sold-first —
+`sortDealOrders` (sells, then `symbol:quantity:limitPriceMicro`) is applied when
+the broker builds a proposal, and `assertOrdersSortedStable` is an execution gate
+in `orchestrator.execute`. If you touch sorting or Sizing, rerun `npm run demo`
+and the tests. To fix a lint issue NEVER use `--unsafe` (it can reorder fills).
 
 ## Money conventions (critical)
 

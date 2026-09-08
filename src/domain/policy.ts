@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { ASSET_UNIT } from './money.js';
 import type { DealProposal, OrderSpec } from '../types.js';
+import { ASSET_UNIT } from './money.js';
 
 export const ALLOWED_SYMBOLS = ['BTC', 'ETH', 'SOL'] as const;
 export type AllowedSymbol = (typeof ALLOWED_SYMBOLS)[number];
@@ -52,7 +52,10 @@ export function checkProposal(p: DealProposal): PolicyFailure[] {
     failures.push({ code: 'slippage-cap', message: 'slippage tolerance above policy cap' });
   }
   if (p.policyHash !== policyHash()) {
-    failures.push({ code: 'policy-version', message: 'policy hash mismatch (policy changed under the deal)' });
+    failures.push({
+      code: 'policy-version',
+      message: 'policy hash mismatch (policy changed under the deal)',
+    });
   }
   if (Date.parse(p.expiresAt) <= Date.now() + 10_000) {
     failures.push({ code: 'expiry', message: 'deal expires too soon' });
@@ -106,6 +109,12 @@ export function checkOrder(order: OrderSpec): PolicyFailure[] {
 /** hash of the canonical deal fields -> binds the intent to the exact agreed deal */
 export function intentPolicyHash(p: Pick<DealProposal, 'orders' | 'maxSlippageBps' | 'feeAtomic'>): string {
   return createHash('sha256')
-    .update(JSON.stringify({ orders: p.orders.map((o) => ({ ...o })), maxSlippageBps: p.maxSlippageBps, fee: p.feeAtomic }))
+    .update(
+      JSON.stringify({
+        orders: p.orders.map((o) => ({ ...o })),
+        maxSlippageBps: p.maxSlippageBps,
+        fee: p.feeAtomic,
+      }),
+    )
     .digest('hex');
 }

@@ -1,6 +1,6 @@
-import { parseMicro, toDecimal, parseAssetMicro, ASSET_UNIT } from './domain/money.js';
-import type { Positions, Receipt, Subaccount } from './types.js';
+import { ASSET_UNIT, parseAssetMicro, parseMicro, toDecimal } from './domain/money.js';
 import type { MarketSource } from './market.js';
+import type { Positions, Receipt, Subaccount } from './types.js';
 
 export type { Subaccount };
 
@@ -24,7 +24,9 @@ export class VirtualSubaccount implements Subaccount {
     this.market = opts.market;
     this.id = opts.id ?? 'df-sub-01';
     const seed = opts.seed ?? DEFAULT_SEED;
-    this.balances = Object.fromEntries(Object.entries(seed.balances).map(([s, q]) => [s, parseAssetMicro(q)]));
+    this.balances = Object.fromEntries(
+      Object.entries(seed.balances).map(([s, q]) => [s, parseAssetMicro(q)]),
+    );
     this.cashMicro = parseMicro(seed.cash);
   }
 
@@ -101,7 +103,10 @@ function computeNav(p: Positions): bigint {
 }
 
 /** Convenience: NAV + weights used by the broker for a plan. */
-export async function portfolioWeights(acc: Subaccount, symbols: string[]): Promise<{
+export async function portfolioWeights(
+  acc: Subaccount,
+  symbols: string[],
+): Promise<{
   navAtomic: bigint;
   weights: { [symbol: string]: string }; // numerator/1e6
   cashWeight: string;

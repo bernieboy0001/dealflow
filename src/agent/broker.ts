@@ -1,9 +1,19 @@
 import { createHash } from 'node:crypto';
-import { parseMicro, toMicro, quantityFromNotional, applyBps, notionalOf, toDecimal, toAssetDecimal, ASSET_UNIT } from '../domain/money.js';
-import { POLICY, policyHash } from '../domain/policy.js';
 import { portfolioWeights } from '../account.js';
-import type { DealProposal, OrderSpec, Side, Subaccount } from '../types.js';
+import { sortDealOrders } from '../domain/deal.js';
+import {
+  ASSET_UNIT,
+  applyBps,
+  notionalOf,
+  parseMicro,
+  quantityFromNotional,
+  toAssetDecimal,
+  toDecimal,
+  toMicro,
+} from '../domain/money.js';
+import { POLICY, policyHash } from '../domain/policy.js';
 import type { MarketSource } from '../market.js';
+import type { DealProposal, OrderSpec, Side, Subaccount } from '../types.js';
 
 export interface BrokerOpts {
   workerId: string;
@@ -45,7 +55,13 @@ export class Broker {
     const quotes = new Map<string, Awaited<ReturnType<MarketSource['quote']>>>();
     for (const s of symbols) quotes.set(s, await this.opts.market.quote(s));
 
-    const orders: { symbol: string; side: Side; quantity: bigint; limitPriceMicro: bigint; slippageBps: number }[] = [];
+    const orders: {
+      symbol: string;
+      side: Side;
+      quantity: bigint;
+      limitPriceMicro: bigint;
+      slippageBps: number;
+    }[] = [];
     for (const s of symbols) {
       const target = (navAtomic * BigInt(Math.round(targetWeightsInput[s]! * 1_000_000))) / 10n ** 6n;
       const current = parseMicro(positions.valuesUsd[s] ?? '0.000000');
@@ -99,14 +115,16 @@ export class Broker {
     }
     const orders1 = funded;
 
-    const orderSpecs: OrderSpec[] = orders1.map((o) => ({
-      symbol: o.symbol,
-      side: o.side,
-      quantity: o.quantity.toString(),
-      limitPriceMicro: o.limitPriceMicro.toString(),
-      maxSlippageBps: o.slippageBps,
-      clientOrderId: deterministicOrderId(o.symbol, o.side, o.quantity, o.limitPriceMicro, this.workerId),
-    }));
+    const orderSpecs: OrderSpec[] = sortDealOrders(
+      orders1.map((o) => ({
+        symbol: o.symbol,
+        side: o.side,
+        quantity: o.quantity.toString(),
+        limitPriceMicro: o.limitPriceMicro.toString(),
+        maxSlippageBps: o.slippageBps,
+        clientOrderId: deterministicOrderId(o.symbol, o.side, o.quantity, o.limitPriceMicro, this.workerId),
+      })),
+    );
 
     const maxNotionalAtomic = orderSpecs.reduce(
       (a, o) => (o.side === 'buy' ? a + notionalOf(BigInt(o.quantity), BigInt(o.limitPriceMicro)) : a),
@@ -114,7 +132,9 @@ export class Broker {
     );
 
     const expectedFeeAtomic = orderSpecs.reduce(
-      (a, o) => a + (notionalOf(BigInt(o.quantity), BigInt(o.limitPriceMicro)) * BigInt(POLICY.maxTotalFeeBps)) / 10_000n,
+      (a, o) =>
+        a +
+        (notionalOf(BigInt(o.quantity), BigInt(o.limitPriceMicro)) * BigInt(POLICY.maxTotalFeeBps)) / 10_000n,
       0n,
     );
 
@@ -127,8 +147,12 @@ export class Broker {
       maxFeeAtomic: POLICY.maxFeeAtomic.toString(),
       expectedFeeAtomic: expectedFeeAtomic.toString(),
       maxSlippageBps: this.slippageBps,
-      targetWeights: Object.fromEntries(Object.entries(targetWeightsInput).map(([s, w]) => [s, w.toFixed(4)])),
-      beforeWeights: Object.fromEntries(symbols.map((s) => [s, (Number(weights[s]) / 10_000_000).toFixed(4)])),
+      targetWeights: Object.fromEntries(
+        Object.entries(targetWeightsInput).map(([s, w]) => [s, w.toFixed(4)]),
+      ),
+      beforeWeights: Object.fromEntries(
+        symbols.map((s) => [s, (Number(weights[s]) / 10_000_000).toFixed(4)]),
+      ),
       feeAtomic: this.feeMicro.toString(),
       expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
       policyHash: policyHash(),
@@ -137,7 +161,13 @@ export class Broker {
   }
 }
 
-function deterministicOrderId(symbol: string, side: Side, quantity: bigint, limit: bigint, workerId: string): string {
+function deterministicOrderId(
+  symbol: string,
+  side: Side,
+  quantity: bigint,
+  limit: bigint,
+  workerId: string,
+): string {
   return createHash('sha256')
     .update([workerId, symbol, side, quantity.toString(), limit.toString()].join('|'))
     .digest('hex')
@@ -148,7 +178,9 @@ function deterministicOrderId(symbol: string, side: Side, quantity: bigint, limi
 function buildSummary(orders: OrderSpec[], expectedFeeAtomic: bigint, feeMicro: bigint): string[] {
   const lines = [`Broker proposes a ${orders.length}-leg rebalance`];
   for (const o of orders) {
-    lines.push(`-> ${o.side === 'buy' ? 'buy' : 'sell'} ${toAssetDecimal(BigInt(o.quantity))} ${o.symbol} @ <= $${toDecimal(BigInt(o.limitPriceMicro))}`);
+    lines.push(
+      `-> ${o.side === 'buy' ? 'buy' : 'sell'} ${toAssetDecimal(BigInt(o.quantity))} ${o.symbol} @ <= $${toDecimal(BigInt(o.limitPriceMicro))}`,
+    );
   }
   lines.push(`expected exchange fees: $${toDecimal(expectedFeeAtomic)}`);
   lines.push(`Broker fee (paid only after verification): $${toDecimal(feeMicro)}`);

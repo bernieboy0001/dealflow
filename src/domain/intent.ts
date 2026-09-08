@@ -1,6 +1,6 @@
 import { hashTypedData } from 'viem';
-import { baseSepolia } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
+import { baseSepolia } from 'viem/chains';
 import { recoverTypedDataAddress } from 'viem/utils';
 import type { DealIntent, Side } from '../types.js';
 
@@ -66,7 +66,12 @@ export function intentDigest(i: DealIntent): `0x${string}` {
 
 export async function signIntent(i: DealIntent, privateKey: `0x${string}`): Promise<string> {
   const account = privateKeyToAccount(privateKey);
-  return account.signTypedData({ domain: DEALFLOW_DOMAIN, types, primaryType: 'DealIntent', message: toTyped(i) });
+  return account.signTypedData({
+    domain: DEALFLOW_DOMAIN,
+    types,
+    primaryType: 'DealIntent',
+    message: toTyped(i),
+  });
 }
 
 /** Pure ecrecover of the EIP-712 signer — no RPC required. */

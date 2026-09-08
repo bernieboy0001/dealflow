@@ -1,8 +1,9 @@
-import express from 'express';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import express from 'express';
+import { portfolioWeights } from './account.js';
+import { POLICY, policyHash } from './domain/policy.js';
 import { buildRuntime, signDeal } from './runtime.js';
-import { policyHash, POLICY } from './domain/policy.js';
 
 const app = express();
 app.use(express.json());
@@ -14,22 +15,57 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, ledger: ledger.root(), alive: orchestrator.alive() });
 });
 
-app.get('/api/state', (_req, res) => {
-  res.json({
-    principal: orchestrator.principalAddress,
-    worker: runtime.broker.workerId,
-    alive: orchestrator.alive(),
-    policyHash: policyHash(),
-    policy: {
-      allowedSymbols: POLICY.allowedSymbols,
-      maxNotionalUsd: Number(POLICY.maxNotionalAtomic) / 1e6,
-      maxSlippageBps: POLICY.maxSlippageBps,
-      maxTotalFeeBps: POLICY.maxTotalFeeBps,
-      roundTrip: POLICY.roundTrip,
-    },
-    ledgerRoot: ledger.root(),
-    deals: orchestrator.list().map((d) => ({ id: d.id, job: d.job, status: d.status, fee: d.feeAtomic, orders: d.orders.length, createdAt: d.createdAt })),
-  });
+app.get('/api/state', async (_req, res) => {
+  try {
+    const symbols = [...POLICY.allowedSymbols];
+    const { navAtomic, weights, cashWeight, positions } = await portfolioWeights(runtime.subaccount, symbols);
+    res.json({
+      principal: orchestrator.principalAddress,
+      worker: runtime.broker.workerId,
+      alive: orchestrator.alive(),
+      at: new Date().toISOString(),
+      policyHash: policyHash(),
+      policy: {
+        allowedSymbols: symbols,
+        maxNotionalUsd: Number(POLICY.maxNotionalAtomic) / 1e6,
+        maxSlippageBps: POLICY.maxSlippageBps,
+        maxTotalFeeBps: POLICY.maxTotalFeeBps,
+        maxFeeUsd: Number(POLICY.maxFeeAtomic) / 1e6,
+        maxHoldingWeight: POLICY.maxHoldingWeight,
+        brokerFeeUsd: Number(runtime.broker.feeMicro) / 1e6,
+        roundTrip: POLICY.roundTrip,
+      },
+      portfolio: {
+        navAtomic: navAtomic.toString(),
+        cashAtomic: positions.cashAtomic,
+        cashWeight,
+        balances: positions.balances,
+        valuesUsd: positions.valuesUsd,
+        weights,
+        fetchedAt: positions.fetchedAt,
+      },
+      ledgerRoot: ledger.root(),
+      deals: orchestrator.list().map((d) => ({
+        id: d.id,
+        job: d.job,
+        status: d.status,
+        fee: d.feeAtomic,
+        orders: d.orders.length,
+        createdAt: d.createdAt,
+      })),
+    });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+app.get('/api/market', async (_req, res) => {
+  try {
+    const quotes = await runtime.market.quotes([...POLICY.allowedSymbols]);
+    res.json({ quotes, at: new Date().toISOString() });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
 });
 
 app.post('/api/propose', async (req, res) => {
@@ -92,7 +128,14 @@ app.get('/api/ledger', (_req, res) => {
   res.json({
     root: ledger.root(),
     verified: ledger.verify(),
-    entries: ledger.all().map((e) => ({ seq: e.seq, kind: e.kind, payload: e.payload, prevHash: e.prevHash, hash: e.hash, at: e.at })),
+    entries: ledger.all().map((e) => ({
+      seq: e.seq,
+      kind: e.kind,
+      payload: e.payload,
+      prevHash: e.prevHash,
+      hash: e.hash,
+      at: e.at,
+    })),
   });
 });
 

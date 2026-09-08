@@ -1,22 +1,23 @@
-import { describe, it, expect } from 'vitest';
-import {
-  parseMicro,
-  toMicro,
-  toDecimal,
-  parseAssetMicro,
-  toAssetDecimal,
-  quantityFromNotional,
-  notionalOf,
-  applyBps,
-} from '../src/domain/money.js';
-import { POLICY, policyHash, checkProposal } from '../src/domain/policy.js';
-import { createDeal, toIntent, transition } from '../src/domain/deal.js';
-import { Ledger } from '../src/ledger.js';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { privateKeyToAccount } from 'viem/accounts';
+import { describe, expect, it } from 'vitest';
 import { VirtualSubaccount } from '../src/account.js';
 import { Auditor } from '../src/agent/auditor.js';
-import { signIntent, recoverSigner } from '../src/domain/intent.js';
+import { createDeal, toIntent, transition } from '../src/domain/deal.js';
+import { recoverSigner, signIntent } from '../src/domain/intent.js';
+import {
+  applyBps,
+  notionalOf,
+  parseAssetMicro,
+  parseMicro,
+  quantityFromNotional,
+  toAssetDecimal,
+  toDecimal,
+  toMicro,
+} from '../src/domain/money.js';
+import { checkProposal, POLICY, policyHash } from '../src/domain/policy.js';
+import { Ledger } from '../src/ledger.js';
 import { fixtureQuote } from '../src/market.js';
-import { privateKeyToAccount } from 'viem/accounts';
 import type { Deal, DealProposal, OrderSpec, Receipt } from '../src/types.js';
 
 const AUDITOR_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d' as const;
@@ -67,7 +68,9 @@ function makeFilledReceipts(orders: OrderSpec[]): Receipt[] {
     side: o.side,
     quantity: o.quantity,
     priceMicro: o.limitPriceMicro,
-    feeMicro: String(Math.round(Number(o.quantity) * Number(o.limitPriceMicro) * POLICY.maxTotalFeeBps / (1e6 * 10_000))),
+    feeMicro: String(
+      Math.round((Number(o.quantity) * Number(o.limitPriceMicro) * POLICY.maxTotalFeeBps) / (1e6 * 10_000)),
+    ),
     status: 'filled' as const,
     txRef: `blk-${i}`,
     at: new Date().toISOString(),
@@ -77,7 +80,8 @@ function makeFilledReceipts(orders: OrderSpec[]): Receipt[] {
 function makeDeal(overrides?: { intent?: boolean; filled?: boolean; policyHash?: string }): Deal {
   const proposal = makeProposal();
   const deal = createDeal(proposal);
-  const intent = overrides?.intent !== false ? toIntent(proposal, 0, Math.floor(Date.now() / 1000) + 1800) : undefined;
+  const intent =
+    overrides?.intent !== false ? toIntent(proposal, 0, Math.floor(Date.now() / 1000) + 1800) : undefined;
   const receipts = overrides?.filled !== false ? makeFilledReceipts(proposal.orders) : [];
   return {
     ...deal,
@@ -128,7 +132,7 @@ describe('money', () => {
 
   it('applyBps buy floors, sell ceils', () => {
     const price = 100_000_000n; // $100
-    expect(applyBps(price, 15, 'buy')).toBe(100_150_000n);  // floor (exact division)
+    expect(applyBps(price, 15, 'buy')).toBe(100_150_000n); // floor (exact division)
     expect(applyBps(price, 15, 'sell')).toBe(100_150_000n); // ceil of exact division = same
     // asymmetric case
     const p2 = 100_000_001n;
@@ -175,8 +179,22 @@ describe('policy', () => {
   it('rejects round-trip (buy + sell same symbol)', () => {
     const p = makeProposal({
       orders: [
-        { symbol: 'BTC', side: 'sell', quantity: '1000000', limitPriceMicro: '84000000000', maxSlippageBps: 15, clientOrderId: 'a' },
-        { symbol: 'BTC', side: 'buy', quantity: '500000', limitPriceMicro: '84000000000', maxSlippageBps: 15, clientOrderId: 'b' },
+        {
+          symbol: 'BTC',
+          side: 'sell',
+          quantity: '1000000',
+          limitPriceMicro: '84000000000',
+          maxSlippageBps: 15,
+          clientOrderId: 'a',
+        },
+        {
+          symbol: 'BTC',
+          side: 'buy',
+          quantity: '500000',
+          limitPriceMicro: '84000000000',
+          maxSlippageBps: 15,
+          clientOrderId: 'b',
+        },
       ],
     });
     expect(checkProposal(p).some((f) => f.code === 'round-trip')).toBe(true);
@@ -184,7 +202,16 @@ describe('policy', () => {
 
   it('rejects unknown symbol', () => {
     const p = makeProposal({
-      orders: [{ symbol: 'DOGE', side: 'buy', quantity: '100', limitPriceMicro: '1000000', maxSlippageBps: 15, clientOrderId: 'x' }],
+      orders: [
+        {
+          symbol: 'DOGE',
+          side: 'buy',
+          quantity: '100',
+          limitPriceMicro: '1000000',
+          maxSlippageBps: 15,
+          clientOrderId: 'x',
+        },
+      ],
     });
     expect(checkProposal(p).some((f) => f.code === 'symbol')).toBe(true);
   });
@@ -236,16 +263,19 @@ describe('ledger', () => {
   });
 
   it('tampered entry fails verify', () => {
-    const entries = (new Ledger('.local/t.json')).all();
-    const ledger = new Ledger('.local/t.json');
-    ledger.append('k', 'v');
-    // tamper: manually write a wrong hash entry
-    const corrupted = new Ledger('.local/t.json');
-    corrupted.append('k', 'v');
-    expect(corrupted.verify()).toBe(true);
-    // direct mutation of the internal store via all() won't work — test the chain hash property
-    // instead: two independent ledgers with same data have same root
-    expect(ledger.root()).toBe(corrupted.root());
+    const file = '.local/t.json';
+    const ledger = new Ledger(file);
+    ledger.append('event.a', { n: 1 });
+    // rewire the on-disk chain: rewrite entry 1's payload without recomputing its hash
+    const stored = JSON.parse(readFileSync(file, 'utf8')) as {
+      seq: number;
+      payload: unknown;
+      hash: string;
+    }[];
+    stored[0] = { ...stored[0], payload: { n: 2 } };
+    writeFileSync(file, JSON.stringify(stored));
+    const reloaded = Ledger.load(file);
+    expect(reloaded.verify()).toBe(false); // chain no longer recomputes to a valid root
   });
 
   it('byKind filters', () => {
@@ -266,9 +296,16 @@ describe('VirtualSubaccount', () => {
   it('execute buy fills and debits cash', async () => {
     const acc = new VirtualSubaccount({ market, seed: { balances: { BTC: '0' }, cash: '500' } });
     const receipt: Receipt = {
-      orderId: 'm1', clientOrderId: 'c1', symbol: 'BTC', side: 'buy',
-      quantity: '5950', priceMicro: '84000000000', feeMicro: '50000',
-      status: 'filled', txRef: 'blk-0', at: new Date().toISOString(),
+      orderId: 'm1',
+      clientOrderId: 'c1',
+      symbol: 'BTC',
+      side: 'buy',
+      quantity: '5950',
+      priceMicro: '84000000000',
+      feeMicro: '50000',
+      status: 'filled',
+      txRef: 'blk-0',
+      at: new Date().toISOString(),
     };
     const [result] = await acc.execute([receipt]);
     expect(result.status).toBe('filled');
@@ -280,9 +317,16 @@ describe('VirtualSubaccount', () => {
   it('execute buy rejected when insufficient cash', async () => {
     const acc = new VirtualSubaccount({ market, seed: { balances: { BTC: '0' }, cash: '1' } });
     const receipt: Receipt = {
-      orderId: 'm2', clientOrderId: 'c2', symbol: 'BTC', side: 'buy',
-      quantity: '3571000', priceMicro: '84000000000', feeMicro: '300000',
-      status: 'filled', txRef: 'blk-0', at: new Date().toISOString(),
+      orderId: 'm2',
+      clientOrderId: 'c2',
+      symbol: 'BTC',
+      side: 'buy',
+      quantity: '3571000',
+      priceMicro: '84000000000',
+      feeMicro: '300000',
+      status: 'filled',
+      txRef: 'blk-0',
+      at: new Date().toISOString(),
     };
     const [result] = await acc.execute([receipt]);
     expect(result.status).toBe('rejected');
@@ -291,9 +335,16 @@ describe('VirtualSubaccount', () => {
   it('execute sell rejected when insufficient asset', async () => {
     const acc = new VirtualSubaccount({ market, seed: { balances: { BTC: '0' }, cash: '500' } });
     const receipt: Receipt = {
-      orderId: 'm3', clientOrderId: 'c3', symbol: 'BTC', side: 'sell',
-      quantity: '1000000', priceMicro: '84000000000', feeMicro: '300000',
-      status: 'filled', txRef: 'blk-0', at: new Date().toISOString(),
+      orderId: 'm3',
+      clientOrderId: 'c3',
+      symbol: 'BTC',
+      side: 'sell',
+      quantity: '1000000',
+      priceMicro: '84000000000',
+      feeMicro: '300000',
+      status: 'filled',
+      txRef: 'blk-0',
+      at: new Date().toISOString(),
     };
     const [result] = await acc.execute([receipt]);
     expect(result.status).toBe('rejected');

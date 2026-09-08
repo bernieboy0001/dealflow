@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { recoverTypedDataAddress } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { hashTypedData, recoverTypedDataAddress } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { toDecimal } from '../domain/money.js';
 
@@ -151,23 +151,25 @@ export function signAuthorization(params: {
     payTo: accepted.payTo as `0x${string}`,
     maxAmount: BigInt(accepted.amount),
     amount: params.amountAtomic,
-    nonce: BigInt('0x' + nonce),
+    nonce: BigInt(`0x${nonce}`),
     expiresAt: BigInt(expiresAt),
   };
-  return account.signTypedData({
-    domain: X402_DOMAIN,
-    types: x402Types,
-    primaryType: 'Authorization',
-    message,
-  }).then((authorization) => {
-    const payload: PaymentPayload = {
-      x402Version: 2,
-      resource: params.req.resource,
-      accepted: { ...accepted, amountActual: params.amountAtomic.toString() },
-      payload: { signedAt, expiresAt, authorization, nonce },
-    };
-    return { payload, expiresAt };
-  });
+  return account
+    .signTypedData({
+      domain: X402_DOMAIN,
+      types: x402Types,
+      primaryType: 'Authorization',
+      message,
+    })
+    .then((authorization) => {
+      const payload: PaymentPayload = {
+        x402Version: 2,
+        resource: params.req.resource,
+        accepted: { ...accepted, amountActual: params.amountAtomic.toString() },
+        payload: { signedAt, expiresAt, authorization, nonce },
+      };
+      return { payload, expiresAt };
+    });
 }
 
 export function encodePaymentPayload(payload: PaymentPayload): string {
@@ -213,7 +215,7 @@ export class LocalFacilitator implements Facilitator {
       payTo: a.payTo as `0x${string}`,
       maxAmount: max,
       amount: actual,
-      nonce: BigInt('0x' + p.nonce),
+      nonce: BigInt(`0x${p.nonce}`),
       expiresAt: BigInt(p.expiresAt),
     };
     const signer = await recoverTypedDataAddress({
@@ -236,10 +238,21 @@ export class LocalFacilitator implements Facilitator {
     // deterministic testnet tx hash from the settlement intent
     const txHash = ('0x' +
       createHash('sha256')
-        .update(JSON.stringify({ nonce: payload.payload.nonce, amount: actual.toString(), payTo: payload.accepted.payTo }))
+        .update(
+          JSON.stringify({
+            nonce: payload.payload.nonce,
+            amount: actual.toString(),
+            payTo: payload.accepted.payTo,
+          }),
+        )
         .digest('hex')) as `0x${string}`;
     this.used.add(payload.payload.nonce);
-    this.settled.push({ txHash, amount: actual.toString(), payTo: payload.accepted.payTo, payer: this.principal });
+    this.settled.push({
+      txHash,
+      amount: actual.toString(),
+      payTo: payload.accepted.payTo,
+      payer: this.principal,
+    });
     return { x402Version: 2, status: 'settled', txHash };
   }
 

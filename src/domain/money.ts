@@ -11,8 +11,8 @@ export function parseMicro(value: string): bigint {
   const neg = s.startsWith('-');
   const clean = neg ? s.slice(1) : s;
   const [whole = '0', frac = ''] = clean.split('.');
-  const fracPadded = (frac + '000000').slice(0, 6);
-  let out = BigInt(whole) * UNIT + BigInt(fracPadded);
+  const fracPadded = `${frac}000000`.slice(0, 6);
+  const out = BigInt(whole) * UNIT + BigInt(fracPadded);
   return neg ? -out : out;
 }
 
@@ -21,8 +21,8 @@ export function parseAssetMicro(value: string): bigint {
   const neg = s.startsWith('-');
   const clean = neg ? s.slice(1) : s;
   const [whole = '0', frac = ''] = clean.split('.');
-  const fracPadded = (frac + '000000').slice(0, 6);
-  let out = BigInt(whole) * ASSET_UNIT + BigInt(fracPadded);
+  const fracPadded = `${frac}000000`.slice(0, 6);
+  const out = BigInt(whole) * ASSET_UNIT + BigInt(fracPadded);
   return neg ? -out : out;
 }
 
@@ -43,7 +43,7 @@ export function toAssetDecimal(atomic: bigint): string {
   const a = neg ? -atomic : atomic;
   const whole = a / ASSET_UNIT;
   const frac = (a % ASSET_UNIT).toString().padStart(6, '0').replace(/0+$/, '');
-  return `${neg ? '-' : ''}${whole}${frac ? '.' + frac : ''}`;
+  return `${neg ? '-' : ''}${whole}${frac ? `.${frac}` : ''}`;
 }
 
 /** Multiply a micro price by (1 + bps/10000), floor'ing for buys (conservative), ceil'ing for sells. */

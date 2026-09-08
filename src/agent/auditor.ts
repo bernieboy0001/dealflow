@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { policyHash, POLICY } from '../domain/policy.js';
 import { privateKeyToAccount } from 'viem/accounts';
+import { POLICY, policyHash } from '../domain/policy.js';
 import type { AuditVerdict, Deal, Receipt } from '../types.js';
 
 export interface AuditorOpts {
@@ -38,7 +38,11 @@ export class Auditor {
     for (const o of deal.orders) {
       const r = filled.get(o.clientOrderId);
       if (!r) {
-        checks.push({ name: 'receipt', ok: false, detail: `missing receipt for ${o.symbol} ${o.clientOrderId}` });
+        checks.push({
+          name: 'receipt',
+          ok: false,
+          detail: `missing receipt for ${o.symbol} ${o.clientOrderId}`,
+        });
       } else if (r.status !== 'filled') {
         checks.push({ name: 'receipt', ok: false, detail: `${o.symbol} order ${r.status}` });
       }
@@ -52,7 +56,11 @@ export class Auditor {
         const expected = BigInt(signed.limitPriceMicro);
         const ok = r.side === 'buy' ? limit <= expected : limit >= expected;
         if (!ok) {
-          checks.push({ name: 'price-limit', ok: false, detail: `${r.symbol} at ${r.priceMicro} vs limit ${signed.limitPriceMicro}` });
+          checks.push({
+            name: 'price-limit',
+            ok: false,
+            detail: `${r.symbol} at ${r.priceMicro} vs limit ${signed.limitPriceMicro}`,
+          });
         }
       }
     }
@@ -61,7 +69,11 @@ export class Auditor {
     for (const r of deal.receipts) {
       const signed = deal.orders.find((o) => o.clientOrderId === r.clientOrderId);
       if (signed && BigInt(r.quantity) !== BigInt(signed.quantity)) {
-        checks.push({ name: 'quantity', ok: false, detail: `${r.symbol}: filled ${r.quantity} vs signed ${signed.quantity}` });
+        checks.push({
+          name: 'quantity',
+          ok: false,
+          detail: `${r.symbol}: filled ${r.quantity} vs signed ${signed.quantity}`,
+        });
       }
     }
 
@@ -69,7 +81,11 @@ export class Auditor {
     const realizedFees = deal.receipts.reduce((a, r) => a + BigInt(r.feeMicro), 0n);
     const expectedFees = BigInt(deal.expectedFeeAtomic);
     if (realizedFees > expectedFees * 2n) {
-      checks.push({ name: 'fee-bound', ok: false, detail: `fees $${realizedFees.toString()} vs expected $${expectedFees.toString()}` });
+      checks.push({
+        name: 'fee-bound',
+        ok: false,
+        detail: `fees $${realizedFees.toString()} vs expected $${expectedFees.toString()}`,
+      });
     }
     if (realizedFees > BigInt(POLICY.maxFeeAtomic) + BigInt(deal.feeAtomic)) {
       checks.push({ name: 'fee-cap', ok: false, detail: 'fees beyond policy cap' });

@@ -10,9 +10,33 @@ export interface MarketSource {
 }
 
 const FIXTURE: Record<string, MarketQuote> = {
-  BTC: { symbol: 'BTC', price: '84120.5', bid: '84118.2', ask: '84123.1', changePct: '1.42', source: 'binance', at: '' },
-  ETH: { symbol: 'ETH', price: '3152.44', bid: '3151.9', ask: '3153.0', changePct: '-0.31', source: 'binance', at: '' },
-  SOL: { symbol: 'SOL', price: '186.73', bid: '186.6', ask: '186.88', changePct: '2.05', source: 'binance', at: '' },
+  BTC: {
+    symbol: 'BTC',
+    price: '84120.5',
+    bid: '84118.2',
+    ask: '84123.1',
+    changePct: '1.42',
+    source: 'binance',
+    at: '',
+  },
+  ETH: {
+    symbol: 'ETH',
+    price: '3152.44',
+    bid: '3151.9',
+    ask: '3153.0',
+    changePct: '-0.31',
+    source: 'binance',
+    at: '',
+  },
+  SOL: {
+    symbol: 'SOL',
+    price: '186.73',
+    bid: '186.6',
+    ask: '186.88',
+    changePct: '2.05',
+    source: 'binance',
+    at: '',
+  },
 };
 
 export class BinanceMarket implements MarketSource {
@@ -26,11 +50,15 @@ export class BinanceMarket implements MarketSource {
   async quote(symbol: string): Promise<MarketQuote> {
     if (!this.useLive) return fixtureQuote(symbol);
     try {
-      const ticker = (await fetch(`${this.base}/api/v3/ticker/bookTicker?symbol=${symbol}USDT`).then((r) => r.json())) as {
+      const ticker = (await fetch(`${this.base}/api/v3/ticker/bookTicker?symbol=${symbol}USDT`).then((r) =>
+        r.json(),
+      )) as {
         bidPrice: string;
         askPrice: string;
       };
-      const change = (await fetch(`${this.base}/api/v3/ticker/24hr?symbol=${symbol}USDT`).then((r) => r.json())) as {
+      const change = (await fetch(`${this.base}/api/v3/ticker/24hr?symbol=${symbol}USDT`).then((r) =>
+        r.json(),
+      )) as {
         priceChangePercent: string;
       };
       return {

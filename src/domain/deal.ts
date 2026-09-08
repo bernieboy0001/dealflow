@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { intentPolicyHash } from './policy.js';
 import type { Deal, DealIntent, DealProposal, DealStatus, OrderSpec } from '../types.js';
+import { intentPolicyHash } from './policy.js';
 
 const FLOW: Record<DealStatus, DealStatus[]> = {
   proposing: ['proposed', 'failed'],
@@ -53,12 +53,34 @@ export function transition(deal: Deal, next: DealStatus, reason?: string): Deal 
   return { ...deal, status: next, updatedAt: new Date().toISOString() };
 }
 
+/**
+ * Canonical deal order: sells before buys so the subaccount is funded at
+ * execution time (a deal must be self-funding), then a deterministic key so the
+ * signed intent binds the same sequence every time regardless of input order.
+ */
+export function canonicalOrderKey(o: OrderSpec): string {
+  const sideRank = o.side === 'sell' ? '0' : '1';
+  return `${sideRank}:${o.symbol}:${o.quantity}:${o.limitPriceMicro}`;
+}
+
+export function sortDealOrders(orders: OrderSpec[]): OrderSpec[] {
+  return [...orders].sort((a, b) => {
+    const ka = canonicalOrderKey(a);
+    const kb = canonicalOrderKey(b);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+}
+
+/** Throws unless the orders live in canonical deal order (sells first, stable ties). */
 export function assertOrdersSortedStable(orders: OrderSpec[]): void {
-  for (let i = 1; i < orders.length; i++) {
-    const a = orders[i - 1]!;
-    const b = orders[i]!;
-    const key = (o: OrderSpec) => `${o.symbol}:${o.side}:${o.quantity}:${o.limitPriceMicro}`;
-    if (key(a) >= key(b)) continue;
+  const sorted = sortDealOrders(orders);
+  for (let i = 0; i < orders.length; i++) {
+    if (canonicalOrderKey(orders[i]!) !== canonicalOrderKey(sorted[i]!)) {
+      const a = orders[i]!.symbol;
+      const b = sorted[i]!.symbol;
+      throw new Error(
+        `orders are not in canonical deal order (${i}: ${a}:${orders[i]!.side} vs ${b}:${sorted[i]!.side})`,
+      );
+    }
   }
-  void 0;
 }

@@ -31,6 +31,9 @@ Every step is written to an append-only, tamper-evident ledger.
 - **Deals are self-funding.** The broker sizes every buy against available dry
   powder — cash plus sell proceeds minus exchange fees — so a signed deal can
   actually fill at its limit price, or the execution fails loudly (and unpayable).
+- **Order is canonical.** `sortDealOrders` orders sells first, then buys, then by
+  `symbol:quantity:limitPriceMicro`, and `assertOrdersSortedStable` gates execution
+  on it — so a signed deal always fills in the sequence that funds itself.
 - **Guardrails are pinned, not promised.** Policy (symbols, notional cap, slippage,
   fee band, no round-trips) is hashed into every deal; the auditor re-checks it
   against the current hash at settlement time.
@@ -45,6 +48,7 @@ npm install
 npm run demo          # full lifecycle in the terminal, offline-safe
 npm test              # 30 unit tests — money, policy, ledger, audit, signatures
 npm run typecheck
+npm run lint          # biome check . — style, correctness, unused imports
 npm run start         # Express API + dashboard → http://127.0.0.1:4173
 ```
 
@@ -53,6 +57,7 @@ For the dashboard, rebuild the UI once (then `npm run start` serves it):
 ```bash
 npm run ui:build      # Vite → ui/dist, served by the Express server
 npm run ui:dev        # or live dev on :5173 (proxies /api → :4173)
+npm run typecheck:ui  # tsc for the ui/ tree
 ```
 
 The demo and server use a market **fixture** so everything runs offline. For live
@@ -113,7 +118,8 @@ Demo keys are Hardhat/anvil accounts. **Not for production.**
 | Endpoint | Purpose |
 |---|---|
 | `GET /health` | liveness + ledger root |
-| `GET /api/state` | principal, worker, policy, deals |
+| `GET /api/state` | principal, worker, policy, portfolio (positions/NAV/weights), deals |
+| `GET /api/market` | live/fixture quotes for the allowed symbols |
 | `POST /api/propose` | `{job, targets}` → new deal |
 | `POST /api/approve` | `{dealId}` → signs intent (as the principal) |
 | `POST /api/execute` | `{dealId}` → fills + audits |

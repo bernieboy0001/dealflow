@@ -11,6 +11,9 @@
     "ui:dev": "vite --config ui/vite.config.ts",
     "ui:build": "vite build --config ui/vite.config.ts",
     "typecheck": "tsc --noEmit",
+    "typecheck:ui": "tsc --noEmit -p ui/tsconfig.json",
+    "lint": "biome check .",
+    "lint:fix": "biome check . --write",
     "test": "vitest run"
   },
   "dependencies": {
@@ -20,6 +23,7 @@
     "viem": "^2.56.3"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.12",
     "@types/express": "^5.0.6",
     "@types/node": "^26.5.0",
     "@types/react": "^19.2.18",
