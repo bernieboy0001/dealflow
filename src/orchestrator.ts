@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { Auditor } from './agent/auditor.js';
 import type { Broker } from './agent/broker.js';
@@ -15,6 +14,7 @@ import {
   LocalFacilitator,
   signAuthorization,
 } from './money/rail.js';
+import { STATE_KEYS, type StateStore, saveText } from './storage.js';
 import type { Deal, DealIntent, Receipt, Subaccount } from './types.js';
 
 export interface OrchestratorOpts {
@@ -25,6 +25,8 @@ export interface OrchestratorOpts {
   workerPayTo: string; // an address the worker owns — fee lands here after verification
   ledger: Ledger;
   dealsFile?: string; // optional JSON snapshot so in-flight deals survive restarts
+  store?: StateStore; // durable store: deals + ledger go here instead of the filesystem
+  initialDeals?: Deal[]; // deals restored from the durable store by create()
 }
 
 export class Orchestrator {
@@ -37,7 +39,24 @@ export class Orchestrator {
     this.principal = privateKeyToAccount(opts.principalPrivateKey);
     this.facilitator = new LocalFacilitator(this.principal.address);
     this.emergencyStop = this.replayGuardrail();
-    this.restoreDeals();
+    for (const d of this.opts.initialDeals ?? []) this.deals.set(d.id, d);
+    if (!opts.store) this.restoreDeals();
+  }
+
+  /** Async boot that can restore the deals snapshot from a durable store. */
+  static async create(opts: OrchestratorOpts): Promise<Orchestrator> {
+    let initial: Deal[] | undefined;
+    if (opts.store) {
+      const raw = await opts.store.get(STATE_KEYS.deals);
+      if (raw) {
+        try {
+          initial = JSON.parse(raw) as Deal[];
+        } catch {
+          // corrupted durable snapshot — start with an empty book
+        }
+      }
+    }
+    return new Orchestrator({ ...opts, initialDeals: initial });
   }
 
   /**
@@ -247,13 +266,8 @@ export class Orchestrator {
   /** Deals are JSON-safe (no bigints) — snapshot them so an in-flight deal
    *  survives a broker restart and can be picked back up from its last state. */
   private persistDeals(): void {
-    if (!this.opts.dealsFile) return;
-    try {
-      mkdirSync(dirname(this.opts.dealsFile), { recursive: true });
-      writeFileSync(this.opts.dealsFile, JSON.stringify(this.list()));
-    } catch {
-      // read-only filesystem (Vercel serverless) — deals stay in memory only
-    }
+    if (!this.opts.dealsFile && !this.opts.store) return;
+    saveText(this.opts.store, STATE_KEYS.deals, this.opts.dealsFile ?? '', JSON.stringify(this.list()));
   }
 
   private restoreDeals(): void {

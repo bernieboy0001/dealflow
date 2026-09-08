@@ -380,6 +380,10 @@ const DOCS: DocSection[] = [
           ['POST /api/settle', '{dealId} → x402 payout, refused unless audit passed'],
           ['POST /api/stop', 'emergency stop — rejects new proposals'],
           ['POST /api/resume', 'lifts the emergency stop; recovery is recorded on the ledger'],
+          [
+            'POST /api/restart',
+            'reboots the broker from durable storage — ledger, portfolio and deals reload',
+          ],
           ['GET /api/deals/:id', 'full detail for one deal (orders, receipts, audit, payment)'],
           ['GET /api/ledger', 'the whole evidence chain + verification result'],
         ],
@@ -593,7 +597,14 @@ export function App() {
   if (!state || !ledger) {
     return (
       <div className="app">
-        <Nav tab="dashboard" onTab={() => undefined} state={null} now={now} />
+        <Nav
+          tab="dashboard"
+          onTab={() => undefined}
+          state={null}
+          now={now}
+          onRestart={() => undefined}
+          busy={false}
+        />
         <main className="shell">
           <div className="skeleton-stack" aria-hidden="true">
             <div className="skeleton skeleton-block" />
@@ -614,7 +625,20 @@ export function App() {
 
   return (
     <div className="app">
-      <Nav tab={tab} onTab={setTab} state={state} now={now} />
+      <Nav
+        tab={tab}
+        onTab={setTab}
+        state={state}
+        now={now}
+        busy={busy}
+        onRestart={() => {
+          post(
+            '/api/restart',
+            {},
+            'Broker restarted — ledger, portfolio and deals reloaded from durable storage.',
+          );
+        }}
+      />
       <main className="shell">
         {!state.alive && (
           <StoppedBanner
@@ -698,11 +722,15 @@ function Nav({
   onTab,
   state,
   now,
+  busy,
+  onRestart,
 }: {
   tab: 'dashboard' | 'docs';
   onTab: (t: 'dashboard' | 'docs') => void;
   state: State | null;
   now: Date;
+  busy: boolean;
+  onRestart: () => void;
 }) {
   return (
     <header className="nav">
@@ -745,6 +773,15 @@ function Nav({
         </button>
       </nav>
       <div className="nav-right">
+        <button
+          type="button"
+          className="btn btn-sm btn-restart"
+          onClick={onRestart}
+          disabled={busy}
+          title="Reboots the broker from durable storage — ledger, portfolio and deals are reloaded from the evidence chain."
+        >
+          {busy ? 'Working…' : 'Restart broker'}
+        </button>
         {state && (
           <>
             <span

@@ -547,6 +547,17 @@ code {
   font-size: 12.5px;
 }
 
+.btn-restart {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.btn-restart:hover:not(:disabled) {
+  border-color: var(--text);
+  color: var(--text);
+}
+
 .microcopy {
   margin: 0;
   padding-left: 18px;

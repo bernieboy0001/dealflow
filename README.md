@@ -130,8 +130,22 @@ Demo keys are Hardhat/anvil accounts. **Not for production.**
 | `POST /api/settle` | `{dealId}` → x402 payout (only when audit passed) |
 | `POST /api/stop` | emergency stop — broker rejects new proposals; persisted on the ledger, so it survives restarts |
 | `POST /api/resume` | lifts the emergency stop; recovery recorded on the ledger |
+| `POST /api/restart` | reboots the broker from durable storage — ledger, portfolio, deals |
 | `GET /api/deals/:id` | single deal detail |
 | `GET /api/ledger` | full evidence chain + verification |
+
+## Durability
+
+State (evidence ledger, subaccount balances, in-flight deals) is append-only and
+snapshot to disk under `.local/` on a dev box. It's a demo's honest truth.
+
+On Vercel the filesystem is read-only, so a deployed broker used to forget
+everything on every cold start. Setting `UPSTASH_REDIS_REST_URL` +
+`UPSTASH_REDIS_REST_TOKEN` (what Vercel KV provisions; `KV_REST_API_*` and
+`DEALFLOW_KV_*` pairs work too) reroutes all three state pieces to a durable
+Upstash Redis store, so every function instance boots from the same truth.
+`POST /api/restart` (and the **Restart broker** button in the nav) rebuilds the
+runtime from that durable state.
 
 ## Testing
 

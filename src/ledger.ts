@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { loadText, type StateStore, saveText } from './storage.js';
 
 export interface LedgerEntry {
   seq: number;
@@ -21,6 +22,8 @@ export class Ledger {
   constructor(
     private readonly file: string,
     seed?: LedgerEntry[],
+    private readonly store?: StateStore,
+    private readonly storeKey: string = 'ledger',
   ) {
     this.entries = seed ?? [];
   }
@@ -31,6 +34,19 @@ export class Ledger {
       return new Ledger(file, JSON.parse(raw) as LedgerEntry[]);
     }
     return new Ledger(file);
+  }
+
+  /** Boot from a durable store when configured, else fall back to the file. */
+  static async loadDurable(store: StateStore | undefined, file: string, storeKey: string): Promise<Ledger> {
+    const raw = await loadText(store, storeKey, file);
+    if (raw) {
+      try {
+        return new Ledger(file, JSON.parse(raw) as LedgerEntry[], store, storeKey);
+      } catch {
+        // corrupted durable entry — start fresh rather than crash the broker
+      }
+    }
+    return new Ledger(file, undefined, store, storeKey);
   }
 
   get seq(): number {
@@ -86,12 +102,7 @@ export class Ledger {
   }
 
   private flush(): void {
-    try {
-      mkdirSync(dirname(this.file), { recursive: true });
-      writeFileSync(this.file, JSON.stringify(this.entries, null, 2));
-    } catch {
-      // read-only filesystem (Vercel serverless) — state survives only in memory
-    }
+    saveText(this.store, this.storeKey, this.file, JSON.stringify(this.entries, null, 2));
   }
 }
 

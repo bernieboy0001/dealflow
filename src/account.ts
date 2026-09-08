@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { ASSET_UNIT, parseAssetMicro, parseMicro, toAssetDecimal, toDecimal } from './domain/money.js';
 import type { MarketSource } from './market.js';
+import { STATE_KEYS, type StateStore, saveText } from './storage.js';
 import type { Positions, Receipt, Subaccount } from './types.js';
 
 export type { Subaccount };
@@ -28,17 +28,52 @@ export class VirtualSubaccount implements Subaccount {
   private balances: { [symbol: string]: bigint }; // asset quantities at 6dp scale
   private readonly market: MarketSource;
   private readonly stateFile?: string;
+  private readonly store?: StateStore;
+  private readonly storeKey: string;
 
-  constructor(opts: { market: MarketSource; seed?: Seed; id?: string; stateFile?: string }) {
+  constructor(opts: {
+    market: MarketSource;
+    seed?: Seed;
+    id?: string;
+    stateFile?: string;
+    store?: StateStore;
+    storeKey?: string;
+  }) {
     this.market = opts.market;
     this.id = opts.id ?? 'df-sub-01';
     this.stateFile = opts.stateFile;
-    const persisted = this.stateFile ? readSnapshot(this.stateFile) : null;
+    this.store = opts.store;
+    this.storeKey = opts.storeKey ?? STATE_KEYS.account;
+    // durable-store restores via create(); the file is the local fallback
+    const persisted = this.store ? null : this.stateFile ? readSnapshot(this.stateFile) : null;
     const seed = persisted ?? opts.seed ?? DEFAULT_SEED;
     this.balances = Object.fromEntries(
       Object.entries(seed.balances).map(([s, q]) => [s, parseAssetMicro(q)]),
     );
     this.cashMicro = parseMicro(seed.cash);
+  }
+
+  /** Async boot that can read the initial snapshot from a durable store. */
+  static async create(opts: {
+    market: MarketSource;
+    seed?: Seed;
+    id?: string;
+    stateFile?: string;
+    store?: StateStore;
+    storeKey?: string;
+  }): Promise<VirtualSubaccount> {
+    let persisted: SubaccountSnapshot | null = null;
+    if (opts.store) {
+      const raw = await opts.store.get(opts.storeKey ?? STATE_KEYS.account);
+      if (raw) {
+        try {
+          persisted = JSON.parse(raw) as SubaccountSnapshot;
+        } catch {
+          // corrupted snapshot — start from the seed
+        }
+      }
+    }
+    return new VirtualSubaccount({ ...opts, seed: persisted ?? opts.seed });
   }
 
   private cached?: Positions;
@@ -103,7 +138,7 @@ export class VirtualSubaccount implements Subaccount {
       this.cached = undefined;
       out.push({ ...r, status: 'filled', at: new Date().toISOString() });
     }
-    if (this.stateFile) this.flushSnapshot();
+    if (this.stateFile || this.store) this.flushSnapshot();
     return out;
   }
 
@@ -115,12 +150,8 @@ export class VirtualSubaccount implements Subaccount {
   }
 
   private flushSnapshot(): void {
-    try {
-      mkdirSync(dirname(this.stateFile!), { recursive: true });
-      writeFileSync(this.stateFile!, JSON.stringify(this.snapshot()));
-    } catch {
-      // read-only filesystem (Vercel serverless) — balances stay in memory only
-    }
+    if (!this.stateFile && !this.store) return;
+    saveText(this.store, this.storeKey, this.stateFile ?? '', JSON.stringify(this.snapshot()));
   }
 }
 

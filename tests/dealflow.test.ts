@@ -20,6 +20,7 @@ import { checkProposal, POLICY, policyHash } from '../src/domain/policy.js';
 import { Ledger } from '../src/ledger.js';
 import { fixtureQuote } from '../src/market.js';
 import { Orchestrator } from '../src/orchestrator.js';
+import { STATE_KEYS, type StateStore } from '../src/storage.js';
 import type { Deal, DealProposal, OrderSpec, Receipt } from '../src/types.js';
 
 const AUDITOR_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d' as const;
@@ -488,5 +489,100 @@ describe('EIP-712 intent signature', () => {
     const sig = await signIntent(intent, AUDITOR_KEY);
     const recovered = await recoverSigner(intent, sig as `0x${string}`);
     expect(recovered.toLowerCase()).not.toBe('0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266');
+  });
+});
+
+// ─── durable store (Vercel KV / Upstash Redis) ──────────────────────────────
+
+class MemStore implements StateStore {
+  readonly m = new Map<string, string>();
+  get(key: string): Promise<string | null> {
+    return Promise.resolve(this.m.get(key) ?? null);
+  }
+  set(key: string, value: string): Promise<void> {
+    this.m.set(key, value);
+    return Promise.resolve();
+  }
+}
+
+describe('durable state via a store', () => {
+  const market = { quote: fixtureQuote, quotes: (syms: string[]) => Promise.all(syms.map(fixtureQuote)) };
+
+  it('ledger persists across boots through the store', async () => {
+    const store = new MemStore();
+    const file = '.local/durable-ledger.json';
+    const a = await Ledger.loadDurable(store, file, STATE_KEYS.ledger);
+    a.append('guardrail.emergency_stop', { at: 't' });
+    a.append('deal.proposed', { id: 'd-1' });
+
+    const b = await Ledger.loadDurable(store, file, STATE_KEYS.ledger);
+    expect(b.all()).toHaveLength(2);
+    expect(b.root()).toBe(a.root());
+    expect(b.verify()).toBe(true);
+  });
+
+  it('subaccount snapshot survives restarts through the store', async () => {
+    const store = new MemStore();
+    const a = await VirtualSubaccount.create({
+      market,
+      store,
+      seed: { balances: { BTC: '0' }, cash: '500' },
+    });
+    const receipt: Receipt = {
+      orderId: 'm1',
+      clientOrderId: 'c1',
+      symbol: 'BTC',
+      side: 'buy',
+      quantity: '5950',
+      priceMicro: '84000000000',
+      feeMicro: '50000',
+      status: 'filled',
+      txRef: 'blk-0',
+      at: new Date().toISOString(),
+    };
+    const [result] = await a.execute([receipt]);
+    expect(result.status).toBe('filled');
+
+    const b = await VirtualSubaccount.create({ market, store }); // fresh instance, no seed
+    expect(b.cashReservedAtomic()).toBeLessThan(500_000_000n);
+    const pos = await b.positions(['BTC']);
+    expect(pos.balances.BTC).toBe('5950');
+  });
+
+  it('orchestrator restores deals and guardrail through the store', async () => {
+    const store = new MemStore();
+    const boot = async () => {
+      const ledger = await Ledger.loadDurable(store, '.local/durable-oc-ledger.json', STATE_KEYS.ledger);
+      const subaccount = await VirtualSubaccount.create({
+        market,
+        store,
+        seed: { balances: { BTC: '0.0068', ETH: '0.05', SOL: '0.5' }, cash: '500' },
+      });
+      const broker = new Broker(subaccount, { workerId: 'broker-1', market });
+      const auditor = new Auditor({ auditorId: 'aud-1', privateKey: AUDITOR_KEY });
+      return Orchestrator.create({
+        broker,
+        auditor,
+        subaccount,
+        principalPrivateKey: PRINCIPAL_KEY,
+        workerPayTo: privateKeyToAccount(AUDITOR_KEY).address,
+        ledger,
+        store,
+        dealsFile: '.local/durable-oc-deals.json',
+      });
+    };
+
+    const o1 = await boot();
+    const deal = await o1.propose('rebalance', { BTC: 0.4, ETH: 0.3 });
+    o1.stop();
+
+    const o2 = await boot(); // restart
+    expect(o2.list()).toHaveLength(1);
+    expect(o2.get(deal.id)?.status).toBe('proposed');
+    expect(o2.alive()).toBe(false);
+
+    o2.resume();
+    const o3 = await boot();
+    expect(o3.alive()).toBe(true);
   });
 });

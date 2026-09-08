@@ -4,18 +4,25 @@ import express from 'express';
 import { portfolioWeights } from './account.js';
 import { POLICY, policyHash } from './domain/policy.js';
 import { buildRuntime, signDeal } from './runtime.js';
+import { drainStore } from './storage.js';
 
 /** Build the whole Dealflow API + dashboard app. Shared by the local server
  *  (src/server.ts) and the Vercel serverless function (api/index.ts). */
-export function createApp() {
+export async function createApp() {
   const app = express();
   app.use(express.json());
 
-  const runtime = buildRuntime();
-  const { orchestrator, ledger } = runtime;
+  let runtime = await buildRuntime();
 
   app.get('/health', (_req, res) => {
-    res.json({ ok: true, ledger: ledger.root(), alive: orchestrator.alive() });
+    res.json({
+      ok: true,
+      ledger: runtime.ledger.root(),
+      alive: runtime.orchestrator.alive(),
+      durable: Boolean(
+        process.env.DEALFLOW_KV_URL || process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL,
+      ),
+    });
   });
 
   app.get('/api/state', async (_req, res) => {
@@ -26,9 +33,9 @@ export function createApp() {
         symbols,
       );
       res.json({
-        principal: orchestrator.principalAddress,
+        principal: runtime.orchestrator.principalAddress,
         worker: runtime.broker.workerId,
-        alive: orchestrator.alive(),
+        alive: runtime.orchestrator.alive(),
         at: new Date().toISOString(),
         policyHash: policyHash(),
         policy: {
@@ -50,8 +57,8 @@ export function createApp() {
           weights,
           fetchedAt: positions.fetchedAt,
         },
-        ledgerRoot: ledger.root(),
-        deals: orchestrator.list().map((d) => ({
+        ledgerRoot: runtime.ledger.root(),
+        deals: runtime.orchestrator.list().map((d) => ({
           id: d.id,
           job: d.job,
           status: d.status,
@@ -78,7 +85,7 @@ export function createApp() {
     try {
       const { job, targets } = req.body as { job?: string; targets?: Record<string, number> };
       if (!targets) throw new Error('missing targets');
-      const deal = await orchestrator.propose(job ?? 'rebalance', targets);
+      const deal = await runtime.orchestrator.propose(job ?? 'rebalance', targets);
       res.json({ deal });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
@@ -91,7 +98,7 @@ export function createApp() {
     try {
       const { dealId } = req.body as { dealId: string };
       const signature = await signDeal(dealId, runtime);
-      const deal = await orchestrator.approve(dealId, signature as `0x${string}`);
+      const deal = await runtime.orchestrator.approve(dealId, signature as `0x${string}`);
       res.json({ deal });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
@@ -101,8 +108,8 @@ export function createApp() {
   app.post('/api/execute', async (req, res) => {
     try {
       const { dealId } = req.body as { dealId: string };
-      let deal = await orchestrator.execute(dealId);
-      deal = await orchestrator.audit(dealId);
+      let deal = await runtime.orchestrator.execute(dealId);
+      deal = await runtime.orchestrator.audit(dealId);
       res.json({ deal });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
@@ -112,7 +119,7 @@ export function createApp() {
   app.post('/api/settle', async (req, res) => {
     try {
       const { dealId } = req.body as { dealId: string };
-      const deal = await orchestrator.settle(dealId);
+      const deal = await runtime.orchestrator.settle(dealId);
       res.json({ deal });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message });
@@ -120,26 +127,43 @@ export function createApp() {
   });
 
   app.post('/api/stop', (_req, res) => {
-    orchestrator.stop();
-    res.json({ alive: orchestrator.alive() });
+    runtime.orchestrator.stop();
+    res.json({ alive: runtime.orchestrator.alive() });
   });
 
   app.post('/api/resume', (_req, res) => {
-    orchestrator.resume();
-    res.json({ alive: orchestrator.alive() });
+    runtime.orchestrator.resume();
+    res.json({ alive: runtime.orchestrator.alive() });
+  });
+
+  /** Reboot the broker runtime from durable state (ledger, account, deals).
+   *  Behind a stop this is the "start fresh against the evidence chain" reset. */
+  app.post('/api/restart', async (_req, res) => {
+    try {
+      await drainStore(); // make sure pending durable writes landed before reload
+      runtime = await buildRuntime();
+      res.json({
+        ok: true,
+        alive: runtime.orchestrator.alive(),
+        ledgerRoot: runtime.ledger.root(),
+        deals: runtime.orchestrator.list().length,
+      });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
   });
 
   app.get('/api/deals/:id', (req, res) => {
-    const deal = orchestrator.get(req.params.id);
+    const deal = runtime.orchestrator.get(req.params.id);
     if (!deal) return res.status(404).json({ error: 'not found' });
     res.json({ deal });
   });
 
   app.get('/api/ledger', (_req, res) => {
     res.json({
-      root: ledger.root(),
-      verified: ledger.verify(),
-      entries: ledger.all().map((e) => ({
+      root: runtime.ledger.root(),
+      verified: runtime.ledger.verify(),
+      entries: runtime.ledger.all().map((e) => ({
         seq: e.seq,
         kind: e.kind,
         payload: e.payload,

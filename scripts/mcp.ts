@@ -16,9 +16,9 @@ import { buildRuntime } from '../src/runtime.js';
 
 // ---------------------------------------------------------------------------
 
-let runtimeReady: ReturnType<typeof buildRuntime> | null = null;
-function runtime() {
-  if (!runtimeReady) runtimeReady = buildRuntime();
+let runtimeReady: Promise<Awaited<ReturnType<typeof buildRuntime>>> | null = null;
+function runtime(): Promise<Awaited<ReturnType<typeof buildRuntime>>> {
+  runtimeReady ??= buildRuntime();
   return runtimeReady;
 }
 
@@ -64,7 +64,7 @@ const TOOLS: Tool[] = [
     description: 'Broker state: principal address, worker id, subaccount positions, ledger root.',
     inputSchema: { type: 'object', additionalProperties: false },
     run: async () => {
-      const r = runtime();
+      const r = await runtime();
       const positions = await r.subaccount.positions([...POLICY.allowedSymbols]);
       return {
         principal: r.orchestrator.principalAddress,
@@ -98,7 +98,7 @@ const TOOLS: Tool[] = [
     run: async (args) => {
       const targets = args.targets as Record<string, number>;
       if (!targets || typeof targets !== 'object') throw new Error('targets required');
-      const r = runtime();
+      const r = await runtime();
       const proposal = await r.broker.propose((args.job as string) ?? 'rebalance', targets);
       const failures = checkProposal(proposal);
       return {
@@ -122,7 +122,7 @@ const TOOLS: Tool[] = [
     description: 'Re-verify the append-only evidence hash chain. False means tampering detected.',
     inputSchema: { type: 'object', additionalProperties: false },
     run: async () => {
-      const r = runtime();
+      const r = await runtime();
       return { root: r.ledger.root(), verified: r.ledger.verify(), seq: r.ledger.seq };
     },
   },

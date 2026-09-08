@@ -1,8 +1,6 @@
 import { toAssetDecimal, toDecimal } from '../domain/money.js';
 import { addressOf, buildRuntime } from '../runtime.js';
 
-const { market, broker, auditor, subaccount, orchestrator, ledger } = buildRuntime();
-
 const YEL = (s: string) => `\x1b[33m${s}\x1b[0m`;
 const GRN = (s: string) => `\x1b[32m${s}\x1b[0m`;
 const DIM = (s: string) => `\x1b[2m${s}\x1b[0m`;
@@ -12,6 +10,9 @@ function hr() {
 }
 
 async function main() {
+  const runtime = await buildRuntime();
+  const { market, broker, auditor, subaccount, orchestrator, ledger } = runtime;
+
   console.log();
   console.log(GRN('  DEALFLOW — THE BROKER'));
   console.log(DIM('  Pay-per-outcome agents on Binance Agent OS. Work is a priced deal,'));
