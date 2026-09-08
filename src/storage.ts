@@ -66,30 +66,34 @@ export function durableStoreFromEnv(): StateStore | undefined {
   return url && token ? new UpstashRedisStore(url, token) : undefined;
 }
 
-/** Minimal Upstash Redis REST client — GET /get/:key, POST /set/:key. */
+/** Minimal Upstash Redis client — the command endpoint: POST {url} with a JSON
+ *  command array, returns [{ result, error? }]. (The /set/{key} route
+ *  double-wraps values; this form round-trips raw strings faithfully.) */
 class UpstashRedisStore implements StateStore {
   constructor(
     private readonly url: string,
     private readonly token: string,
   ) {}
 
-  async get(key: string): Promise<string | null> {
-    const res = await fetch(`${this.url}/get/${encodeURIComponent(key)}`, {
-      headers: { Authorization: `Bearer ${this.token}` },
+  private async command<T>(cmd: unknown[]): Promise<T> {
+    const res = await fetch(this.url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(cmd),
       cache: 'no-store',
     });
-    if (!res.ok) throw new Error(`durable-store GET ${res.status}`);
-    const j = (await res.json()) as { result?: string | null };
-    return j.result ?? null;
+    if (!res.ok) throw new Error(`durable-store ${String(cmd[0])} ${res.status}`);
+    const j = (await res.json()) as { result?: T; error?: string }[];
+    if (!j[0]) throw new Error(`durable-store ${String(cmd[0])}: empty reply`);
+    if (j[0].error) throw new Error(`durable-store ${String(cmd[0])}: ${j[0].error}`);
+    return j[0].result as T;
+  }
+
+  async get(key: string): Promise<string | null> {
+    return (await this.command<string | null>(['GET', key])) ?? null;
   }
 
   async set(key: string, value: string): Promise<void> {
-    const res = await fetch(`${this.url}/set/${encodeURIComponent(key)}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ value }),
-      cache: 'no-store',
-    });
-    if (!res.ok) throw new Error(`durable-store SET ${res.status}`);
+    await this.command<string>(['SET', key, value]);
   }
 }
