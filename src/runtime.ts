@@ -22,7 +22,11 @@ export interface Runtime {
 
 export function buildRuntime(opts: { seed?: Seed } = {}): Runtime {
   const market = new BinanceMarket({ useLive: process.env.DEALFLOW_LIVE_MARKET === '1' });
-  const subaccount = new VirtualSubaccount({ market, seed: opts.seed });
+  const subaccount = new VirtualSubaccount({
+    market,
+    seed: opts.seed,
+    stateFile: localPath('dealflow', 'account.json'),
+  });
   const workerKey = (process.env.DEALFLOW_WORKER_KEY as `0x${string}`) ?? DEMO_WORKER_KEY;
   const principalKey = (process.env.DEALFLOW_PRINCIPAL_KEY as `0x${string}`) ?? DEMO_PRINCIPAL_KEY;
 
@@ -40,6 +44,7 @@ export function buildRuntime(opts: { seed?: Seed } = {}): Runtime {
     principalPrivateKey: principalKey,
     workerPayTo: (process.env.DEALFLOW_WORKER_PAY_TO as string) ?? addressOf(workerKey),
     ledger,
+    dealsFile: localPath('dealflow', 'deals.json'),
   });
   return { market, subaccount, broker, auditor, orchestrator, ledger };
 }

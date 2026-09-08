@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "outputDirectory": "ui/dist",
+  "routes": [
+    {
+      "src": "/health(.*)",
+      "dest": "/api/index.ts"
+    },
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/index.ts"
+    }
+  ]
+}

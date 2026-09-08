@@ -10,6 +10,8 @@
     "demo": "tsx src/scripts/demo.ts",
     "ui:dev": "vite --config ui/vite.config.ts",
     "ui:build": "vite build --config ui/vite.config.ts",
+    "build:server": "tsc -p tsconfig.vercel.json",
+    "build": "npm run build:server && npm run ui:build",
     "typecheck": "tsc --noEmit",
     "typecheck:ui": "tsc --noEmit -p ui/tsconfig.json",
     "lint": "biome check .",

@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { Auditor } from './agent/auditor.js';
 import type { Broker } from './agent/broker.js';
@@ -22,17 +24,34 @@ export interface OrchestratorOpts {
   principalPrivateKey: `0x${string}`;
   workerPayTo: string; // an address the worker owns — fee lands here after verification
   ledger: Ledger;
+  dealsFile?: string; // optional JSON snapshot so in-flight deals survive restarts
 }
 
 export class Orchestrator {
   private readonly principal;
-  private emergencyStop = false;
+  private emergencyStop: boolean;
   private readonly deals = new Map<string, Deal>();
   private readonly facilitator: LocalFacilitator;
 
   constructor(private readonly opts: OrchestratorOpts) {
     this.principal = privateKeyToAccount(opts.principalPrivateKey);
     this.facilitator = new LocalFacilitator(this.principal.address);
+    this.emergencyStop = this.replayGuardrail();
+    this.restoreDeals();
+  }
+
+  /**
+   * The emergency stop is a ledger fact, not a process fact: the last guardrail
+   * entry decides the boot state, so a stop survives a crash or restart until
+   * an explicit resume is recorded on the same evidence chain.
+   */
+  private replayGuardrail(): boolean {
+    let stopped = false;
+    for (const e of this.opts.ledger.all()) {
+      if (e.kind === 'guardrail.emergency_stop') stopped = true;
+      else if (e.kind === 'guardrail.resume') stopped = false;
+    }
+    return stopped;
   }
 
   get principalAddress() {
@@ -42,6 +61,12 @@ export class Orchestrator {
   stop(): void {
     this.emergencyStop = true;
     this.opts.ledger.append('guardrail.emergency_stop', { at: new Date().toISOString() });
+  }
+
+  /** A stop can be lifted — proposals are accepted again. Recovery is also audited on the chain. */
+  resume(): void {
+    this.emergencyStop = false;
+    this.opts.ledger.append('guardrail.resume', { at: new Date().toISOString() });
   }
 
   alive(): boolean {
@@ -215,6 +240,29 @@ export class Orchestrator {
   private mutate(deal: Deal, status: Deal['status']): Deal {
     const next = { ...deal, status, updatedAt: new Date().toISOString() };
     this.deals.set(next.id, next);
+    this.persistDeals();
     return next;
+  }
+
+  /** Deals are JSON-safe (no bigints) — snapshot them so an in-flight deal
+   *  survives a broker restart and can be picked back up from its last state. */
+  private persistDeals(): void {
+    if (!this.opts.dealsFile) return;
+    try {
+      mkdirSync(dirname(this.opts.dealsFile), { recursive: true });
+      writeFileSync(this.opts.dealsFile, JSON.stringify(this.list()));
+    } catch {
+      // read-only filesystem (Vercel serverless) — deals stay in memory only
+    }
+  }
+
+  private restoreDeals(): void {
+    if (!this.opts.dealsFile || !existsSync(this.opts.dealsFile)) return;
+    try {
+      const stored = JSON.parse(readFileSync(this.opts.dealsFile, 'utf8')) as Deal[];
+      for (const d of stored) this.deals.set(d.id, d);
+    } catch {
+      // corrupted snapshot — start fresh rather than crash the broker
+    }
   }
 }

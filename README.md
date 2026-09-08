@@ -60,6 +60,10 @@ npm run ui:dev        # or live dev on :5173 (proxies /api → :4173)
 npm run typecheck:ui  # tsc for the ui/ tree
 ```
 
+The dashboard has two tabs: a live **Dashboard** (portfolio, deals, evidence ledger)
+and a full built-in **Docs** tab covering the lifecycle, policy, money model,
+ledger, setup, architecture, API and MCP reference.
+
 The demo and server use a market **fixture** so everything runs offline. For live
 Binance quotes set `DEALFLOW_LIVE_MARKET=1`.
 
@@ -124,7 +128,8 @@ Demo keys are Hardhat/anvil accounts. **Not for production.**
 | `POST /api/approve` | `{dealId}` → signs intent (as the principal) |
 | `POST /api/execute` | `{dealId}` → fills + audits |
 | `POST /api/settle` | `{dealId}` → x402 payout (only when audit passed) |
-| `POST /api/stop` | emergency stop — broker rejects new proposals |
+| `POST /api/stop` | emergency stop — broker rejects new proposals; persisted on the ledger, so it survives restarts |
+| `POST /api/resume` | lifts the emergency stop; recovery recorded on the ledger |
 | `GET /api/deals/:id` | single deal detail |
 | `GET /api/ledger` | full evidence chain + verification |
 

@@ -79,7 +79,7 @@ export class Broker {
     }
 
     if (orders.length === 0) {
-      throw new Error('portfolio already at target — no deal needed');
+      throw new Error('portfolio already at target weights — tweak a target to open a new deal');
     }
 
     // funding-aware sizing: buys may never exceed cash on hand + proceeds from the

@@ -1,10 +1,18 @@
-import { ASSET_UNIT, parseAssetMicro, parseMicro, toDecimal } from './domain/money.js';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { ASSET_UNIT, parseAssetMicro, parseMicro, toAssetDecimal, toDecimal } from './domain/money.js';
 import type { MarketSource } from './market.js';
 import type { Positions, Receipt, Subaccount } from './types.js';
 
 export type { Subaccount };
 
 export interface Seed {
+  balances: { [symbol: string]: string };
+  cash: string;
+}
+
+/** What a VirtualSubaccount persists across restarts. */
+export interface SubaccountSnapshot {
   balances: { [symbol: string]: string };
   cash: string;
 }
@@ -19,11 +27,14 @@ export class VirtualSubaccount implements Subaccount {
   private cashMicro: bigint;
   private balances: { [symbol: string]: bigint }; // asset quantities at 6dp scale
   private readonly market: MarketSource;
+  private readonly stateFile?: string;
 
-  constructor(opts: { market: MarketSource; seed?: Seed; id?: string }) {
+  constructor(opts: { market: MarketSource; seed?: Seed; id?: string; stateFile?: string }) {
     this.market = opts.market;
     this.id = opts.id ?? 'df-sub-01';
-    const seed = opts.seed ?? DEFAULT_SEED;
+    this.stateFile = opts.stateFile;
+    const persisted = this.stateFile ? readSnapshot(this.stateFile) : null;
+    const seed = persisted ?? opts.seed ?? DEFAULT_SEED;
     this.balances = Object.fromEntries(
       Object.entries(seed.balances).map(([s, q]) => [s, parseAssetMicro(q)]),
     );
@@ -92,7 +103,33 @@ export class VirtualSubaccount implements Subaccount {
       this.cached = undefined;
       out.push({ ...r, status: 'filled', at: new Date().toISOString() });
     }
+    if (this.stateFile) this.flushSnapshot();
     return out;
+  }
+
+  private snapshot(): SubaccountSnapshot {
+    return {
+      balances: Object.fromEntries(Object.entries(this.balances).map(([s, q]) => [s, toAssetDecimal(q)])),
+      cash: toDecimal(this.cashMicro),
+    };
+  }
+
+  private flushSnapshot(): void {
+    try {
+      mkdirSync(dirname(this.stateFile!), { recursive: true });
+      writeFileSync(this.stateFile!, JSON.stringify(this.snapshot()));
+    } catch {
+      // read-only filesystem (Vercel serverless) — balances stay in memory only
+    }
+  }
+}
+
+function readSnapshot(file: string): SubaccountSnapshot | null {
+  try {
+    if (!existsSync(file)) return null;
+    return JSON.parse(readFileSync(file, 'utf8')) as SubaccountSnapshot;
+  } catch {
+    return null;
   }
 }
 

@@ -86,8 +86,12 @@ export class Ledger {
   }
 
   private flush(): void {
-    mkdirSync(dirname(this.file), { recursive: true });
-    writeFileSync(this.file, JSON.stringify(this.entries, null, 2));
+    try {
+      mkdirSync(dirname(this.file), { recursive: true });
+      writeFileSync(this.file, JSON.stringify(this.entries, null, 2));
+    } catch {
+      // read-only filesystem (Vercel serverless) — state survives only in memory
+    }
   }
 }
 

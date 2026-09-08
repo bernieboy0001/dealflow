@@ -1,6 +1,12 @@
 node_modules/
 dist/
 ui/dist/
+vercel-dist/
+.vercel/
 .local/
 *.log
 .DS_Store
+.vercel
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

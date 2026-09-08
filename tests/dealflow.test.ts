@@ -1,8 +1,9 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { privateKeyToAccount } from 'viem/accounts';
 import { describe, expect, it } from 'vitest';
 import { VirtualSubaccount } from '../src/account.js';
 import { Auditor } from '../src/agent/auditor.js';
+import { Broker } from '../src/agent/broker.js';
 import { createDeal, toIntent, transition } from '../src/domain/deal.js';
 import { recoverSigner, signIntent } from '../src/domain/intent.js';
 import {
@@ -18,6 +19,7 @@ import {
 import { checkProposal, POLICY, policyHash } from '../src/domain/policy.js';
 import { Ledger } from '../src/ledger.js';
 import { fixtureQuote } from '../src/market.js';
+import { Orchestrator } from '../src/orchestrator.js';
 import type { Deal, DealProposal, OrderSpec, Receipt } from '../src/types.js';
 
 const AUDITOR_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d' as const;
@@ -286,6 +288,34 @@ describe('ledger', () => {
     expect(ledger.byKind('event.a')).toHaveLength(2);
     expect(ledger.byKind('event.b')).toHaveLength(1);
   });
+
+  it('emergency stop survives a restart until an explicit resume', async () => {
+    const market = { quote: fixtureQuote, quotes: (syms: string[]) => Promise.all(syms.map(fixtureQuote)) };
+    const boot = () => {
+      const ledger = Ledger.load('.local/guardrail.json');
+      const subaccount = new VirtualSubaccount({
+        market,
+        seed: { balances: { BTC: '1000000' }, cash: '500' },
+      });
+      const broker = new Broker(subaccount, { workerId: 'broker-1', market });
+      const auditor = new Auditor({ auditorId: 'aud-1', privateKey: AUDITOR_KEY });
+      return new Orchestrator({
+        broker,
+        auditor,
+        subaccount,
+        principalPrivateKey: PRINCIPAL_KEY,
+        workerPayTo: privateKeyToAccount(AUDITOR_KEY).address,
+        ledger,
+      });
+    };
+    // stop, then a fresh orchestrator over the same chain must boot stopped
+    boot().stop();
+    expect(boot().alive()).toBe(false);
+    await expect(boot().propose('rebalance', { BTC: 1 })).rejects.toThrow('emergency stop engaged');
+    // ... and an explicit resume lifts it for the next boot
+    boot().resume();
+    expect(boot().alive()).toBe(true);
+  });
 });
 
 // ─── virtual subaccount ─────────────────────────────────────────────────────
@@ -348,6 +378,67 @@ describe('VirtualSubaccount', () => {
     };
     const [result] = await acc.execute([receipt]);
     expect(result.status).toBe('rejected');
+  });
+
+  it('persists balances and cash across instances', async () => {
+    const file = '.local/snap-acc.json';
+    rmSync(file, { force: true });
+    const market = { quote: fixtureQuote, quotes: (syms: string[]) => Promise.all(syms.map(fixtureQuote)) };
+    const keep = { balances: { BTC: '0' }, cash: '500' };
+    const a = new VirtualSubaccount({ market, seed: keep, stateFile: file });
+    const receipt: Receipt = {
+      orderId: 'p1',
+      clientOrderId: 'c1',
+      symbol: 'BTC',
+      side: 'buy',
+      quantity: '5950',
+      priceMicro: '84000000000',
+      feeMicro: '50000',
+      status: 'filled',
+      txRef: 'blk-0',
+      at: new Date().toISOString(),
+    };
+    await a.execute([receipt]);
+
+    const b = new VirtualSubaccount({ market, seed: keep, stateFile: file }); // restart
+    const pos = await b.positions(['BTC']);
+    expect(pos.balances.BTC).toBe('5950'); // buy survived the restart
+    expect(b.cashReservedAtomic()).toBeLessThan(500_000_000n);
+  });
+});
+
+// ─── deal snapshot persistence ───────────────────────────────────────────────
+
+describe('deal snapshot', () => {
+  it('in-flight deals survive a restart via snapshot', async () => {
+    const file = '.local/snap-deals.json';
+    rmSync(file, { force: true });
+    const market = { quote: fixtureQuote, quotes: (syms: string[]) => Promise.all(syms.map(fixtureQuote)) };
+    const boot = () => {
+      const ledger = new Ledger('.local/snap-ledger.json');
+      const subaccount = new VirtualSubaccount({
+        market,
+        seed: { balances: { BTC: '0.0068', ETH: '0.05', SOL: '0.5' }, cash: '500' },
+      });
+      const broker = new Broker(subaccount, { workerId: 'broker-1', market });
+      const auditor = new Auditor({ auditorId: 'aud-1', privateKey: AUDITOR_KEY });
+      return new Orchestrator({
+        broker,
+        auditor,
+        subaccount,
+        principalPrivateKey: PRINCIPAL_KEY,
+        workerPayTo: privateKeyToAccount(AUDITOR_KEY).address,
+        ledger,
+        dealsFile: file,
+      });
+    };
+    const o1 = boot();
+    const deal = await o1.propose('rebalance', { BTC: 0.4, ETH: 0.3 });
+
+    const o2 = boot(); // restart
+    expect(o2.list()).toHaveLength(1);
+    expect(o2.get(deal.id)?.status).toBe('proposed');
+    expect(o2.get(deal.id)?.job).toBe('rebalance');
   });
 });
 
